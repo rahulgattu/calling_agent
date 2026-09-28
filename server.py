@@ -18,8 +18,7 @@ from pipecat.frames.frames import (
     OutputAudioRawFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
@@ -38,10 +37,13 @@ from pipecat.transports.websocket.fastapi import (
 )
 from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
+from pipecat.workers.runner import WorkerRunner
 
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+# This local MVP treats its project .env as the source of truth so a stale
+# shell-level key (for example, an old Cartesia admin key) cannot silently win.
+load_dotenv(BASE_DIR / ".env", override=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calling_agent")
 
@@ -124,6 +126,8 @@ async def voice_socket(websocket: WebSocket):
     )
     tts = CartesiaTTSService(
         api_key=os.environ["CARTESIA_API_KEY"],
+        sample_rate=24_000,
+        encoding="pcm_s16le",
         settings=CartesiaTTSService.Settings(voice=os.environ["CARTESIA_VOICE_ID"]),
     )
 
@@ -155,7 +159,7 @@ async def voice_socket(websocket: WebSocket):
             assistant_aggregator,
         ]
     )
-    task = PipelineTask(
+    task = PipelineWorker(
         pipeline,
         params=PipelineParams(
             allow_interruptions=True,
@@ -188,7 +192,7 @@ async def voice_socket(websocket: WebSocket):
         logger.info("Browser disconnected")
         await task.cancel()
 
-    runner = PipelineRunner()
+    runner = WorkerRunner()
     try:
         await runner.run(task)
     except WebSocketDisconnect:
