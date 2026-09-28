@@ -1,0 +1,145 @@
+const connectButton = document.querySelector('#connect');
+const disconnectButton = document.querySelector('#disconnect');
+const status = document.querySelector('#status');
+
+let socket;
+let stream;
+let inputContext;
+let outputContext;
+let source;
+let workletUrl;
+let playhead = 0;
+
+function setConnected(connected) {
+  connectButton.disabled = connected;
+  disconnectButton.disabled = !connected;
+}
+
+async function disconnect() {
+  if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+  socket = null;
+
+  if (source) source.disconnect();
+  source = null;
+
+  if (stream) stream.getTracks().forEach(track => track.stop());
+  stream = null;
+
+  if (inputContext) await inputContext.close();
+  if (outputContext) await outputContext.close();
+  inputContext = outputContext = null;
+
+  if (workletUrl) URL.revokeObjectURL(workletUrl);
+  workletUrl = null;
+  playhead = 0;
+
+  setConnected(false);
+  status.textContent = 'Disconnected';
+}
+
+connectButton.addEventListener('click', async () => {
+  try {
+    connectButton.disabled = true;
+    status.textContent = 'Requesting microphone...';
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+
+    inputContext = new AudioContext();
+    outputContext = new AudioContext();
+    await inputContext.resume();
+    await outputContext.resume();
+
+    const socketProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    socket = new WebSocket(`${socketProtocol}://${location.host}/ws`);
+    socket.binaryType = 'arraybuffer';
+
+    socket.onmessage = event => {
+      if (!(event.data instanceof ArrayBuffer) || event.data.byteLength < 6) return;
+
+      const view = new DataView(event.data);
+      const sampleRate = view.getUint32(0, true);
+      const pcm = new Int16Array(event.data, 4);
+      const buffer = outputContext.createBuffer(1, pcm.length, sampleRate);
+      const channel = buffer.getChannelData(0);
+
+      for (let i = 0; i < pcm.length; i++) channel[i] = pcm[i] / 32768;
+
+      const player = outputContext.createBufferSource();
+      player.buffer = buffer;
+      player.connect(outputContext.destination);
+      playhead = Math.max(playhead, outputContext.currentTime);
+      player.start(playhead);
+      playhead += buffer.duration;
+    };
+
+    socket.onopen = async () => {
+      const processor = `
+        class PcmCapture extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.phase = 0;
+            this.values = [];
+            this.step = sampleRate / 16000;
+          }
+
+          process(inputs) {
+            const channel = inputs[0] && inputs[0][0];
+            if (!channel) return true;
+
+            for (let i = 0; i < channel.length; i++) {
+              this.phase += 1;
+              if (this.phase >= this.step) {
+                this.phase -= this.step;
+                const value = Math.max(-1, Math.min(1, channel[i]));
+                this.values.push(value < 0 ? value * 32768 : value * 32767);
+
+                if (this.values.length === 320) {
+                  const pcm = new Int16Array(this.values);
+                  this.port.postMessage(pcm.buffer, [pcm.buffer]);
+                  this.values = [];
+                }
+              }
+            }
+            return true;
+          }
+        }
+
+        registerProcessor('pcm-capture', PcmCapture);
+      `;
+
+      workletUrl = URL.createObjectURL(new Blob([processor], { type: 'text/javascript' }));
+      await inputContext.audioWorklet.addModule(workletUrl);
+      source = inputContext.createMediaStreamSource(stream);
+
+      const capture = new AudioWorkletNode(inputContext, 'pcm-capture', {
+        numberOfInputs: 1,
+        numberOfOutputs: 0,
+        channelCount: 1,
+      });
+      capture.port.onmessage = event => {
+        if (socket && socket.readyState === WebSocket.OPEN) socket.send(event.data);
+      };
+      source.connect(capture);
+
+      status.textContent = 'Connected. Speak normally.';
+      setConnected(true);
+    };
+
+    socket.onerror = () => {
+      status.textContent = 'WebSocket error. Is the server running?';
+    };
+    socket.onclose = () => {
+      if (stream) disconnect();
+    };
+  } catch (error) {
+    status.textContent = `Could not connect: ${error.message}`;
+    await disconnect();
+  }
+});
+
+disconnectButton.addEventListener('click', disconnect);
