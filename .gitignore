@@ -1,0 +1,13 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.venv_calling_agent/
+env/
+.env
+
+# --- Logs and Databases ---
+*.log
+*.sqlite
