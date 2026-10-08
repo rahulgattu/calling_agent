@@ -26,6 +26,10 @@ class Settings:
     school_context: str = ""
     browser_input_sample_rate: int = 16_000
     output_sample_rate: int = 24_000
+    telephony_sample_rate: int = 8_000
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -52,6 +56,9 @@ class Settings:
             cartesia_voice_id=required["CARTESIA_VOICE_ID"],
             groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
             school_context=school_context,
+            twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
+            twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+            twilio_phone_number=os.getenv("TWILIO_PHONE_NUMBER", ""),
         )
 
     @staticmethod

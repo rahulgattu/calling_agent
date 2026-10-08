@@ -22,7 +22,8 @@ Keep both laptop processes running during the test. This uses the phone's web br
 - `voice_agent/app.py` owns the FastAPI routes and WebSocket session boundary.
 - `voice_agent/config.py` loads and validates provider credentials and audio/model settings.
 - `voice_agent/serializers.py` defines the browser PCM wire format.
-- `voice_agent/transports.py` creates the browser transport. A Twilio adapter belongs here in Phase 2.
+- `voice_agent/transports.py` creates the browser transport and the Twilio Media Streams transport.
+- `voice_agent/telephony.py` builds the Twilio TwiML webhook response, validates the webhook signature, and issues one-time Media Stream tokens.
 - `voice_agent/pipeline.py` wires STT, LLM, TTS, turn handling, and graceful hangup. It is shared by transports.
 - `voice_agent/prompts.py` holds the agent's opening and system instructions.
 - `principal_context.md` is the separate, editable school information file loaded into the principal's prompt.
@@ -36,4 +37,17 @@ Cloudflare Tunnel can forward the existing `/` page and `/ws` WebSocket to the l
 
 Phase 2 adds a Twilio Media Streams WebSocket endpoint and a Twilio audio serializer/transport adapter. That adapter translates Twilio's call and audio events into the same pipeline input/output interface, leaving the Deepgram, Groq, Cartesia, prompts, and hangup logic reusable. The browser transport remains available for local development.
 
-The Phase 2 implementation needs the call direction (inbound, outbound, or both), a Twilio phone number/account, and a public HTTPS/WSS endpoint reachable by Twilio. Twilio credentials should be stored in `.env`; keep them out of source control. For local development, the public endpoint can be supplied through a secure tunnel. The Twilio stream format is typically 8 kHz μ-law, so the new adapter will handle its conversion separately from the browser's PCM16 format.
+### Inbound call flow
+
+1. Twilio receives a call on your Twilio phone number and sends an HTTP `POST` to `/twilio/voice` (configured as that number's Voice webhook in the Twilio console).
+2. `voice_agent/telephony.py` validates the request's `X-Twilio-Signature` against `TWILIO_AUTH_TOKEN` (skipped with a warning if that variable is unset, so local testing without a token still works), then returns TwiML with a `<Connect><Stream>` pointing at `wss://<host>/twilio/ws/<one-time-token>`.
+3. Twilio opens that WebSocket and streams 8 kHz μ-law audio. `voice_agent/app.py` checks the one-time token (rejecting replays or guesses), calls `pipecat.runner.utils.parse_telephony_websocket` to read Twilio's `start` handshake, and builds a `TwilioFrameSerializer` transport via `voice_agent.transports.create_twilio_transport`.
+4. The same `run_conversation` pipeline used for the browser tester runs the call, with `audio_in_sample_rate` set to 8 kHz to match Twilio's wire format. The `end_call` tool now also triggers Twilio's own call-hangup (via `TwilioFrameSerializer`'s `auto_hang_up`, which needs `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`).
+
+Configure `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_PHONE_NUMBER` in `.env`. Twilio must reach a public HTTPS/WSS endpoint; for local development, forward the same tunnel already documented above (e.g. Cloudflare Tunnel) and set the phone number's Voice webhook to `https://<tunnel-host>/twilio/voice`.
+
+### Outbound calls (planned)
+
+Outbound calls will use the Twilio REST API (`Calls.create`) to dial a number and point it at the same `/twilio/voice` TwiML webhook, reusing the inbound pipeline once the call connects. This is not yet implemented.
+
+The Phase 2 implementation needs the call direction (inbound, outbound, or both), a Twilio phone number/account, and a public HTTPS/WSS endpoint reachable by Twilio. Twilio credentials should be stored in `.env`; keep them out of source control. For local development, the public endpoint can be supplied through a secure tunnel. The Twilio stream format is typically 8 kHz μ-law, so the new adapter handles its conversion separately from the browser's PCM16 format.

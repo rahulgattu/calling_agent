@@ -46,9 +46,16 @@ def build_provider_services(settings: Settings):
     return stt, llm, tts
 
 
-async def run_conversation(transport, settings: Settings) -> None:
-    """Connect one transport session to the shared speech conversation flow."""
+async def run_conversation(
+    transport, settings: Settings, *, audio_in_sample_rate: int | None = None
+) -> None:
+    """Connect one transport session to the shared speech conversation flow.
+
+    ``audio_in_sample_rate`` lets telephony transports (8 kHz) override the
+    browser default so the pipeline matches the wire format of the caller.
+    """
     stt, llm, tts = build_provider_services(settings)
+    input_sample_rate = audio_in_sample_rate or settings.browser_input_sample_rate
     end_call_tool = FunctionSchema(
         name="end_call",
         description="End the conversation after a natural goodbye has been spoken.",
@@ -79,7 +86,7 @@ async def run_conversation(transport, settings: Settings) -> None:
         pipeline,
         params=PipelineParams(
             allow_interruptions=True,
-            audio_in_sample_rate=settings.browser_input_sample_rate,
+            audio_in_sample_rate=input_sample_rate,
             audio_out_sample_rate=settings.output_sample_rate,
         ),
     )

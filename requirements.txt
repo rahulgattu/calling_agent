@@ -2,3 +2,4 @@ fastapi
 uvicorn
 python-dotenv
 pipecat-ai[groq,deepgram,cartesia,websocket]
+twilio
