@@ -1,0 +1,11 @@
+---
+applyTo: "src/**/*.py"
+---
+- Type every function. No `Any` unless commented with the reason.
+- Use Pydantic v2 models at boundaries. Use dataclasses or plain types inside.
+- Use SQLAlchemy 2 async sessions. Get sessions only through `core/tenancy/db.py`, which sets tenant context.
+- Raise typed exceptions from `core/errors.py`. Never return error strings.
+- Use `structlog`. Bind `tenant_id` and `call_id` once per call or request.
+- Time: use `datetime.now(UTC)`. Never naive datetimes. Convert to tenant timezone only for display and business-hours checks.
+- No `print`. No bare `except`. No `time.sleep` in async code.
+- Imports: standard library, third party, local. Ruff enforces it.
